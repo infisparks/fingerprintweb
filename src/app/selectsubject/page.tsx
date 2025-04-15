@@ -73,14 +73,12 @@ export default function SubjectList() {
   const [loading, setLoading] = useState(true);
   const [currentAttendance, setCurrentAttendance] = useState<CurrentAttendance>({});
   const [lectureCounters, setLectureCounters] = useState<LectureCounterEntry[]>([]);
-
   const router = useRouter();
 
   // Fetch subjects and teacher assignments.
   useEffect(() => {
     const fetchData = async () => {
       try {
-        // Get branch data from "subjects".
         const subjectsRef = ref(db, "subjects");
         const subjectSnap = await get(subjectsRef);
         let branches: BranchData[] = [];
@@ -88,7 +86,6 @@ export default function SubjectList() {
           const data = subjectSnap.val();
           branches = Object.values(data);
         }
-        // Get teacher records from "teachers".
         const teachersRef = ref(db, "teachers");
         const teacherSnap = await get(teachersRef);
         let teachers: TeacherData[] = [];
@@ -99,12 +96,10 @@ export default function SubjectList() {
             id: key,
           }));
         }
-        // Build a flat list of subject rows.
         const rows: SubjectRow[] = [];
         branches.forEach((branch) => {
           branch.semesters.forEach((sem: Semester) => {
             sem.subjects.forEach((subject: string) => {
-              // Collect teacher names assigned to this subject.
               const teacherNames: string[] = [];
               teachers.forEach((teacher) => {
                 if (teacher.teacherSubjects) {
@@ -160,7 +155,6 @@ export default function SubjectList() {
       if (snapshot.exists()) {
         const data = snapshot.val();
         const counters: LectureCounterEntry[] = [];
-        // Structure: lecturecount/{branchName}/{sem}/{subject} = { count, branchName, sem, subject }
         Object.entries(data).forEach(([branchName, sems]) => {
           Object.entries(sems as object).forEach(([sem, subjects]) => {
             Object.entries(subjects as object).forEach(([subject, counterData]) => {
@@ -181,7 +175,6 @@ export default function SubjectList() {
     return () => unsubscribe();
   }, []);
 
-  // Filter subject rows based on the search query.
   const filteredRows = subjectRows.filter((row) => {
     const query = searchQuery.toLowerCase();
     return (
@@ -191,13 +184,10 @@ export default function SubjectList() {
     );
   });
 
-  // Handler to set current attendance for a subject and initialize its lecture counter.
   const handleSetCurrentAttendance = async (row: SubjectRow) => {
     try {
-      // Update current attendance.
       const semRef = ref(db, `currentattendance/${row.branchName}/${row.sem}`);
       await set(semRef, row);
-      // Initialize the lecture counter if not exists.
       const exists = lectureCounters.some(
         (entry) =>
           entry.branchName === row.branchName &&
@@ -216,7 +206,6 @@ export default function SubjectList() {
           `lecturecount/${row.branchName}/${row.sem}/${row.subject}`
         );
         await set(counterRef, newCounter);
-        // The onValue listener will update lectureCounters.
       }
     } catch (error) {
       console.error("Error setting current attendance:", error);
@@ -224,7 +213,6 @@ export default function SubjectList() {
     }
   };
 
-  // Helper to update a counter's count based on its unique keys.
   const updateCounterCount = (
     counterToUpdate: LectureCounterEntry,
     newCount: number
@@ -240,19 +228,16 @@ export default function SubjectList() {
     );
   };
 
-  // Increase lecture count for a given counter.
   const handleIncrement = (counter: LectureCounterEntry) => {
     updateCounterCount(counter, counter.count + 1);
   };
 
-  // Decrease lecture count for a given counter.
   const handleDecrement = (counter: LectureCounterEntry) => {
     if (counter.count > 0) {
       updateCounterCount(counter, counter.count - 1);
     }
   };
 
-  // Save the updated lecture counter to Firebase.
   const handleSaveLectureCount = async (counter: LectureCounterEntry) => {
     try {
       const counterRef = ref(
@@ -266,21 +251,22 @@ export default function SubjectList() {
     }
   };
 
-  // Compute the active lecture counter(s) based on current attendance.
   const activeLectureCounters = lectureCounters.filter((counter) => {
     const activeSub = currentAttendance[counter.branchName]?.[counter.sem];
     return activeSub && activeSub.subject === counter.subject;
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 p-6 flex">
-      {/* Sidebar */}
-      <Sidebar />
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 flex">
+      {/* Sidebar should be fixed at left */}
+      <div className="w-64">
+        <Sidebar />
+      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 max-w-6xl mx-auto bg-white rounded-lg shadow-lg p-8">
-        {/* Top Buttons for Navigation */}
-        <div className="flex justify-end space-x-4 mb-6">
+      {/* Main Content without extra padding/margin */}
+      <div className="flex-1">
+        {/* Top Navigation Buttons */}
+        <div className="flex justify-end space-x-4 mt-4 ml-4">
           <button
             onClick={() => router.push("/editsubject")}
             className="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded-md transition duration-200"
@@ -295,100 +281,100 @@ export default function SubjectList() {
           </button>
         </div>
 
-        {/* Subject List Header */}
-        <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
-          Subject List
-        </h1>
-
-        {/* Search Input */}
-        <div className="mb-6 flex items-center">
-          <FaSearch className="text-gray-500 mr-2" />
-          <input
-            type="text"
-            placeholder="Search subject, branch, or semester..."
-            value={searchQuery}
-            onChange={(e: ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
-            className="w-full p-2 border border-gray-300 rounded-md focus:outline-none"
-          />
+        {/* Subject List */}
+        <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-lg p-8 mt-4">
+          <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
+            Subject List
+          </h1>
+          <div className="mb-6 flex items-center">
+            <FaSearch className="text-gray-500 mr-2" />
+            <input
+              type="text"
+              placeholder="Search subject, branch, or semester..."
+              value={searchQuery}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                setSearchQuery(e.target.value)
+              }
+              className="w-full p-2 border border-gray-300 rounded-md focus:outline-none"
+            />
+          </div>
+          {loading ? (
+            <p className="text-center text-gray-500">Loading...</p>
+          ) : filteredRows.length === 0 ? (
+            <p className="text-center text-gray-500">No subjects found.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead>
+                  <tr>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
+                      Branch
+                    </th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
+                      Semester
+                    </th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
+                      Subject
+                    </th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
+                      Teacher(s)
+                    </th>
+                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredRows.map((row, idx) => {
+                    const activeSubjectForSem =
+                      currentAttendance[row.branchName]?.[row.sem];
+                    const isActive =
+                      activeSubjectForSem &&
+                      activeSubjectForSem.subject === row.subject;
+                    return (
+                      <tr key={idx} className="hover:bg-gray-50">
+                        <td className="px-4 py-2 text-sm text-gray-800">
+                          {row.branchName}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-800">
+                          {row.sem}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-800">
+                          {row.subject}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-800">
+                          {row.teacherNames.length > 0
+                            ? row.teacherNames.join(", ")
+                            : "N/A"}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-gray-800">
+                          {isActive ? (
+                            <button
+                              disabled
+                              className="bg-green-500 text-white font-semibold py-1 px-3 rounded-md flex items-center cursor-not-allowed"
+                            >
+                              <FaCheckCircle className="mr-2" /> Active
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleSetCurrentAttendance(row)}
+                              className="bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-3 rounded-md transition duration-200 flex items-center"
+                            >
+                              <FaCheckCircle className="mr-2" /> Set Current Attendance
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
-        {/* Subject List Table */}
-        {loading ? (
-          <p className="text-center text-gray-500">Loading...</p>
-        ) : filteredRows.length === 0 ? (
-          <p className="text-center text-gray-500">No subjects found.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
-                <tr>
-                  <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                    Branch
-                  </th>
-                  <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                    Semester
-                  </th>
-                  <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                    Subject
-                  </th>
-                  <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                    Teacher(s)
-                  </th>
-                  <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                    Action
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filteredRows.map((row, idx) => {
-                  const activeSubjectForSem =
-                    currentAttendance[row.branchName]?.[row.sem];
-                  const isActive =
-                    activeSubjectForSem &&
-                    activeSubjectForSem.subject === row.subject;
-                  return (
-                    <tr key={idx} className="hover:bg-gray-50">
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {row.branchName}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {row.sem}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {row.subject}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {row.teacherNames.length > 0
-                          ? row.teacherNames.join(", ")
-                          : "N/A"}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {isActive ? (
-                          <button
-                            disabled
-                            className="bg-green-500 text-white font-semibold py-1 px-3 rounded-md flex items-center cursor-not-allowed"
-                          >
-                            <FaCheckCircle className="mr-2" /> Active
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleSetCurrentAttendance(row)}
-                            className="bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-3 rounded-md transition duration-200 flex items-center"
-                          >
-                            <FaCheckCircle className="mr-2" /> Set Current Attendance
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
         {/* Active Lecture Counter Section */}
-        <div className="mt-8">
+        <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-lg p-8 mt-4">
           <h2 className="text-2xl font-bold text-gray-800 mb-4">
             Active Lecture Counter
           </h2>

@@ -1,453 +1,346 @@
 "use client";
 
-import { useState, useEffect, ChangeEvent } from "react";
-import { useRouter } from "next/navigation";
-import { ref, get, set, onValue } from "firebase/database";
-import { db } from "../../firebase"; // Adjust path as needed
-import { FaSearch, FaCheckCircle } from "react-icons/fa";
-import Sidebar from "../Component/Sidebar"; // Ensure Sidebar is correctly imported
+import { useEffect, useState } from "react";
+import { ref, onValue } from "firebase/database";
+import Link from "next/link";
+import { db } from "../../firebase";
+import {
+  ChevronDown,
+  Eye,
+  Filter,
+  Search,
+  Users,
+} from "lucide-react";
+import Sidebar from "../Component/Sidebar"; // Adjust the import path based on your project structure
 
-// --- Data Type Definitions ---
-
-// Data type for each semester in a branch.
-interface Semester {
-  id: number | string;
-  sem: string;
-  subjects: string[];
+// Interface for an attendance record.
+interface AttendanceRecord {
+  attended: boolean;
+  timestamp: number; // in milliseconds or seconds
+  branch?: string;
+  sem?: string;
+  subject?: string;
 }
 
-// Data type for a branch from the "subjects" node.
-interface BranchData {
-  id: string;
-  branch: string;
-  semesters: Semester[];
-}
-
-// Data type for teacher subject assignment (as stored in teacherRecords).
-interface TeacherSubjectSelection {
-  branchId: string;
-  branchName: string;
-  semesterId: string;
-  sem: string;
-  subject: string;
-}
-
-// Data type for a teacher record.
-interface TeacherData {
-  id: string;
-  teacherName: string;
-  teacherNumber: string;
-  teacherSubjects?: TeacherSubjectSelection[] | null;
-}
-
-// Data type for a flat subject row in the list.
-export interface SubjectRow {
-  branchId: string;
-  branchName: string;
-  semesterId: string;
-  sem: string;
-  subject: string;
-  teacherNames: string[];
-}
-
-// Interface for the current attendance data stored in Firebase.
-// Structure: currentattendance/{branchName}/{sem} = SubjectRow
-interface CurrentAttendance {
-  [branchName: string]: {
-    [sem: string]: SubjectRow;
+// Interface for user data.
+interface UserData {
+  [key: string]: {
+    id?: string | number;
+    name?: string;
+    number?: string;
+    rollNumber?: string;
+    sem?: string;    // User's semester
+    branch?: string; // User's branch
+    pushKey?: string;
+    attendance?: { [attendanceKey: string]: AttendanceRecord };
+    createdAt?: number;
   };
 }
 
-// New interface for a lecture counter entry (without date).
-interface LectureCounterEntry {
+// Interface for lecture count data.
+interface LectureCountEntry {
   branchName: string;
   sem: string;
   subject: string;
   count: number;
 }
-
-// --- Main Component ---
-export default function SubjectList() {
-  const [subjectRows, setSubjectRows] = useState<SubjectRow[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [currentAttendance, setCurrentAttendance] = useState<CurrentAttendance>({});
-  const [lectureCounters, setLectureCounters] = useState<LectureCounterEntry[]>([]);
-  const router = useRouter();
-
-  // Fetch subjects and teacher assignments.
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const subjectsRef = ref(db, "subjects");
-        const subjectSnap = await get(subjectsRef);
-        let branches: BranchData[] = [];
-        if (subjectSnap.exists()) {
-          const data = subjectSnap.val();
-          branches = Object.values(data);
-        }
-        const teachersRef = ref(db, "teachers");
-        const teacherSnap = await get(teachersRef);
-        let teachers: TeacherData[] = [];
-        if (teacherSnap.exists()) {
-          const tData = teacherSnap.val();
-          teachers = Object.entries(tData).map(([key, value]) => ({
-            ...(value as TeacherData),
-            id: key,
-          }));
-        }
-        const rows: SubjectRow[] = [];
-        branches.forEach((branch) => {
-          branch.semesters.forEach((sem: Semester) => {
-            sem.subjects.forEach((subject: string) => {
-              const teacherNames: string[] = [];
-              teachers.forEach((teacher) => {
-                if (teacher.teacherSubjects) {
-                  teacher.teacherSubjects.forEach((ts) => {
-                    if (
-                      ts.branchId === branch.id &&
-                      ts.semesterId.toString() === sem.id.toString() &&
-                      ts.subject === subject
-                    ) {
-                      teacherNames.push(teacher.teacherName);
-                    }
-                  });
-                }
-              });
-              rows.push({
-                branchId: branch.id,
-                branchName: branch.branch,
-                semesterId: sem.id.toString(),
-                sem: sem.sem,
-                subject,
-                teacherNames,
-              });
-            });
-          });
-        });
-        setSubjectRows(rows);
-      } catch (error) {
-        console.error("Error fetching subject list:", error);
-      } finally {
-        setLoading(false);
-      }
+interface LectureCountData {
+  [branchName: string]: {
+    [sem: string]: {
+      [subject: string]: LectureCountEntry;
     };
-    fetchData();
-  }, []);
+  };
+}
 
-  // Listen for changes in current attendance.
+export default function AttendancePage() {
+  const [usersData, setUsersData] = useState<UserData>({});
+  const [lectureCountData, setLectureCountData] = useState<LectureCountData>({});
+  const [filter, setFilter] = useState<"all" | "year" | "month" | "week">("all");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Fetch users data.
   useEffect(() => {
-    const currentRef = ref(db, "currentattendance");
-    const unsubscribe = onValue(currentRef, (snapshot) => {
+    const usersRef = ref(db, "users");
+    const unsubscribe = onValue(usersRef, (snapshot) => {
+      setIsLoading(false);
       if (snapshot.exists()) {
-        setCurrentAttendance(snapshot.val());
+        const data = snapshot.val();
+        setUsersData(data);
       } else {
-        setCurrentAttendance({});
+        setUsersData({});
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // Listen for changes in lecture counter node.
+  // Fetch lecture count data.
   useEffect(() => {
     const lectureCountRef = ref(db, "lecturecount");
     const unsubscribe = onValue(lectureCountRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const counters: LectureCounterEntry[] = [];
-        Object.entries(data).forEach(([branchName, sems]) => {
-          Object.entries(sems as object).forEach(([sem, subjects]) => {
-            Object.entries(subjects as object).forEach(([subject, counterData]) => {
-              counters.push({
-                branchName,
-                sem,
-                subject,
-                count: (counterData as any).count || 0,
-              });
-            });
-          });
-        });
-        setLectureCounters(counters);
+        setLectureCountData(data);
       } else {
-        setLectureCounters([]);
+        setLectureCountData({});
       }
     });
     return () => unsubscribe();
   }, []);
 
-  const filteredRows = subjectRows.filter((row) => {
-    const query = searchQuery.toLowerCase();
-    return (
-      row.subject.toLowerCase().includes(query) ||
-      row.branchName.toLowerCase().includes(query) ||
-      row.sem.toLowerCase().includes(query)
-    );
-  });
-
-  const handleSetCurrentAttendance = async (row: SubjectRow) => {
-    try {
-      const semRef = ref(db, `currentattendance/${row.branchName}/${row.sem}`);
-      await set(semRef, row);
-      const exists = lectureCounters.some(
-        (entry) =>
-          entry.branchName === row.branchName &&
-          entry.sem === row.sem &&
-          entry.subject === row.subject
-      );
-      if (!exists) {
-        const newCounter: LectureCounterEntry = {
-          branchName: row.branchName,
-          sem: row.sem,
-          subject: row.subject,
-          count: 0,
-        };
-        const counterRef = ref(
-          db,
-          `lecturecount/${row.branchName}/${row.sem}/${row.subject}`
-        );
-        await set(counterRef, newCounter);
+  // Helper: Check whether a given timestamp is within the selected filter.
+  const isWithinFilter = (timestamp: number) => {
+    const now = new Date();
+    let date = new Date(timestamp);
+    // If timestamp appears to be in seconds (e.g., length=10), convert it.
+    if (String(timestamp).length === 10) {
+      date = new Date(timestamp * 1000);
+    }
+    switch (filter) {
+      case "year":
+        return now.getFullYear() === date.getFullYear();
+      case "month":
+        return now.getFullYear() === date.getFullYear() && now.getMonth() === date.getMonth();
+      case "week": {
+        const oneDay = 24 * 60 * 60 * 1000;
+        const diffDays = (now.getTime() - date.getTime()) / oneDay;
+        return diffDays <= 7 && diffDays >= 0;
       }
-    } catch (error) {
-      console.error("Error setting current attendance:", error);
-      alert("Error setting current attendance.");
+      case "all":
+      default:
+        return true;
     }
   };
 
-  const updateCounterCount = (
-    counterToUpdate: LectureCounterEntry,
-    newCount: number
-  ) => {
-    setLectureCounters((prev) =>
-      prev.map((c) =>
-        c.branchName === counterToUpdate.branchName &&
-        c.sem === counterToUpdate.sem &&
-        c.subject === counterToUpdate.subject
-          ? { ...c, count: newCount }
-          : c
-      )
-    );
-  };
+  // Transform user data into an array for easier rendering and compute attendance percentage.
+  const usersArray = Object.entries(usersData).map(([key, value]) => {
+    // Ensure attendance exists.
+    const attendance = value.attendance || {};
+    // Filter attendance records that match the user's branch and sem and the selected filter.
+    const validAttendance = Object.values(attendance).filter((record) => {
+      return record.branch === value.branch && record.sem === value.sem && isWithinFilter(record.timestamp);
+    });
+    const attendanceCount = validAttendance.length;
 
-  const handleIncrement = (counter: LectureCounterEntry) => {
-    updateCounterCount(counter, counter.count + 1);
-  };
-
-  const handleDecrement = (counter: LectureCounterEntry) => {
-    if (counter.count > 0) {
-      updateCounterCount(counter, counter.count - 1);
+    // Calculate total scheduled lectures for the user's branch & sem.
+    let scheduledLectures = 0;
+    if (lectureCountData[value.branch || ""] && lectureCountData[value.branch || ""][value.sem || ""]) {
+      const subjectEntries = lectureCountData[value.branch || ""][value.sem || ""];
+      scheduledLectures = Object.values(subjectEntries).reduce((sum, entry) => sum + entry.count, 0);
     }
-  };
+    const attendancePercentage = scheduledLectures > 0
+      ? Math.round((attendanceCount / scheduledLectures) * 100)
+      : 0;
 
-  const handleSaveLectureCount = async (counter: LectureCounterEntry) => {
-    try {
-      const counterRef = ref(
-        db,
-        `lecturecount/${counter.branchName}/${counter.sem}/${counter.subject}`
-      );
-      await set(counterRef, counter);
-    } catch (error) {
-      console.error("Error saving lecture count:", error);
-      alert("Error saving lecture count.");
-    }
-  };
-
-  const activeLectureCounters = lectureCounters.filter((counter) => {
-    const activeSub = currentAttendance[counter.branchName]?.[counter.sem];
-    return activeSub && activeSub.subject === counter.subject;
+    return {
+      pushKey: key,
+      id: value.id || "",
+      name: value.name || "Unknown",
+      number: value.number || "",
+      rollNumber: value.rollNumber || "",
+      sem: value.sem || "N/A",
+      branch: value.branch || "N/A",
+      attendanceCount,
+      scheduledLectures,
+      attendancePercentage,
+    };
   });
+
+  // Filter users by search term.
+  const filteredUsers = usersArray.filter(
+    (user) =>
+      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.rollNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      String(user.id).toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // Summary statistics.
+  const totalUsers = usersArray.length;
+  // Average attendance percentage across users.
+  const averageAttendancePercentage =
+    usersArray.length > 0
+      ? Math.round(usersArray.reduce((sum, user) => sum + user.attendancePercentage, 0) / usersArray.length)
+      : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-blue-50 flex">
-      {/* Sidebar should be fixed at left */}
-      <div className="w-64">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
+      <div className="flex flex-col lg:flex-row">
         <Sidebar />
-      </div>
+        <div className="flex-1">
+          <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
+            {/* Header Section */}
+            <div className="bg-white rounded-2xl shadow-xl overflow-hidden mb-8">
+              <div className="bg-gradient-to-r from-blue-600 to-indigo-700 px-6 py-8 sm:px-10">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                  <div>
+                    <h1 className="text-3xl font-bold text-white mb-2">Attendance Dashboard</h1>
+                    <p className="text-blue-100">Track and manage student attendance records</p>
+                  </div>
+                  <div className="mt-4 sm:mt-0 flex items-center space-x-2 bg-white/10 backdrop-blur-sm rounded-lg px-4 py-2">
+                    <Users className="h-5 w-5 text-blue-100" />
+                    <span className="text-white font-medium">{totalUsers} Students</span>
+                    <span className="mx-2 text-blue-200">|</span>
+                    <span className="text-white font-medium">
+                      Avg: {averageAttendancePercentage}% Attendance
+                    </span>
+                  </div>
+                </div>
+              </div>
 
-      {/* Main Content without extra padding/margin */}
-      <div className="flex-1">
-        {/* Top Navigation Buttons */}
-        <div className="flex justify-end space-x-4 mt-4 ml-4">
-          <button
-            onClick={() => router.push("/editsubject")}
-            className="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded-md transition duration-200"
-          >
-            Edit Subject
-          </button>
-          <button
-            onClick={() => router.push("/subject")}
-            className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-md transition duration-200"
-          >
-            Add Subject
-          </button>
-        </div>
+              {/* Filter and Search Section */}
+              <div className="px-6 py-4 border-b border-gray-100 bg-white sm:px-10">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
+                  <div className="relative w-full sm:w-96">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Search className="h-5 w-5 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search by name or roll number..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-10 pr-4 py-2 w-full border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                  </div>
 
-        {/* Subject List */}
-        <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-lg p-8 mt-4">
-          <h1 className="text-3xl font-bold text-center text-gray-800 mb-6">
-            Subject List
-          </h1>
-          <div className="mb-6 flex items-center">
-            <FaSearch className="text-gray-500 mr-2" />
-            <input
-              type="text"
-              placeholder="Search subject, branch, or semester..."
-              value={searchQuery}
-              onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                setSearchQuery(e.target.value)
-              }
-              className="w-full p-2 border border-gray-300 rounded-md focus:outline-none"
-            />
-          </div>
-          {loading ? (
-            <p className="text-center text-gray-500">Loading...</p>
-          ) : filteredRows.length === 0 ? (
-            <p className="text-center text-gray-500">No subjects found.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead>
-                  <tr>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Branch
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Semester
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Subject
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Teacher(s)
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {filteredRows.map((row, idx) => {
-                    const activeSubjectForSem =
-                      currentAttendance[row.branchName]?.[row.sem];
-                    const isActive =
-                      activeSubjectForSem &&
-                      activeSubjectForSem.subject === row.subject;
-                    return (
-                      <tr key={idx} className="hover:bg-gray-50">
-                        <td className="px-4 py-2 text-sm text-gray-800">
-                          {row.branchName}
-                        </td>
-                        <td className="px-4 py-2 text-sm text-gray-800">
-                          {row.sem}
-                        </td>
-                        <td className="px-4 py-2 text-sm text-gray-800">
-                          {row.subject}
-                        </td>
-                        <td className="px-4 py-2 text-sm text-gray-800">
-                          {row.teacherNames.length > 0
-                            ? row.teacherNames.join(", ")
-                            : "N/A"}
-                        </td>
-                        <td className="px-4 py-2 text-sm text-gray-800">
-                          {isActive ? (
-                            <button
-                              disabled
-                              className="bg-green-500 text-white font-semibold py-1 px-3 rounded-md flex items-center cursor-not-allowed"
-                            >
-                              <FaCheckCircle className="mr-2" /> Active
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleSetCurrentAttendance(row)}
-                              className="bg-red-500 hover:bg-red-600 text-white font-semibold py-1 px-3 rounded-md transition duration-200 flex items-center"
-                            >
-                              <FaCheckCircle className="mr-2" /> Set Current Attendance
-                            </button>
-                          )}
-                        </td>
+                  <div className="flex items-center space-x-2 w-full sm:w-auto">
+                    <Filter className="h-5 w-5 text-gray-500" />
+                    <label htmlFor="filter" className="text-sm font-medium text-gray-700">
+                      Filter by:
+                    </label>
+                    <div className="relative inline-block w-full sm:w-auto">
+                      <select
+                        id="filter"
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value as any)}
+                        className="appearance-none bg-white border border-gray-200 rounded-lg pl-4 pr-10 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="all">All Time</option>
+                        <option value="year">This Year</option>
+                        <option value="month">This Month</option>
+                        <option value="week">This Week</option>
+                      </select>
+                      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+                        <ChevronDown className="h-4 w-4" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Table Section */}
+            <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+              {isLoading ? (
+                <div className="flex justify-center items-center h-64">
+                  <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50 text-left">
+                        <th className="px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider">
+                          Student
+                        </th>
+                        <th className="px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider">
+                          Roll Number
+                        </th>
+                        <th className="px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider">
+                          Semester
+                        </th>
+                        <th className="px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider">
+                          Branch
+                        </th>
+                        <th className="px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider">
+                          Attendance
+                        </th>
+                        <th className="px-6 py-4 text-sm font-semibold text-gray-600 uppercase tracking-wider">
+                          Actions
+                        </th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredUsers.map((user) => (
+                        <tr key={user.pushKey} className="hover:bg-blue-50 transition-colors duration-150">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className="flex-shrink-0 h-10 w-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-medium">
+                                {user.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="ml-4">
+                                <div className="text-sm font-medium text-gray-900">
+                                  {user.name}
+                                </div>
+                                <div className="text-sm text-gray-500">ID: {user.id}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">{user.rollNumber || "N/A"}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">{user.sem}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">{user.branch}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex flex-col">
+                              <div className="mb-1">
+                                <span className="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                  {user.attendanceCount} / {user.scheduledLectures} sessions
+                                </span>
+                              </div>
+                              <div className="w-full max-w-[150px] bg-gray-200 rounded-full h-2.5">
+                                <div
+                                  className="bg-blue-600 h-2.5 rounded-full"
+                                  style={{ width: `${user.attendancePercentage}%` }}
+                                ></div>
+                              </div>
+                              <div className="mt-1 text-xs text-gray-600">
+                                {user.attendancePercentage}% Attendance
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <Link
+                              href={`/attendance/${user.pushKey}`}
+                              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-150"
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              View Details
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                      {filteredUsers.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-12 text-center">
+                            <div className="flex flex-col items-center justify-center">
+                              <div className="rounded-full bg-blue-50 p-3 mb-4">
+                                <Users className="h-6 w-6 text-blue-500" />
+                              </div>
+                              <p className="text-gray-500 font-medium">No students found</p>
+                              <p className="text-gray-400 text-sm mt-1">
+                                {searchTerm
+                                  ? "Try a different search term"
+                                  : "No attendance records available"}
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {/* Footer */}
+              <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 text-sm text-gray-500 text-center sm:text-right">
+                Showing {filteredUsers.length} of {totalUsers} students
+              </div>
             </div>
-          )}
-        </div>
-
-        {/* Active Lecture Counter Section */}
-        <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-lg p-8 mt-4">
-          <h2 className="text-2xl font-bold text-gray-800 mb-4">
-            Active Lecture Counter
-          </h2>
-          {activeLectureCounters.length === 0 ? (
-            <p className="text-gray-600">
-              No active lecture counter. Please set current attendance.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead>
-                  <tr>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Branch
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Semester
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Subject
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Lecture Count
-                    </th>
-                    <th className="px-4 py-2 text-left text-sm font-semibold text-gray-700">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {activeLectureCounters.map((counter) => (
-                    <tr
-                      key={`${counter.branchName}-${counter.sem}-${counter.subject}`}
-                      className="hover:bg-gray-50"
-                    >
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {counter.branchName}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {counter.sem}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {counter.subject}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        {counter.count}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-gray-800">
-                        <button
-                          onClick={() => handleDecrement(counter)}
-                          className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-1 px-3 rounded-l"
-                        >
-                          –
-                        </button>
-                        <button
-                          onClick={() => handleIncrement(counter)}
-                          className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-1 px-3 rounded-r"
-                        >
-                          +
-                        </button>
-                        <button
-                          onClick={() => handleSaveLectureCount(counter)}
-                          className="ml-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-1 px-3 rounded-md"
-                        >
-                          Save
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </div>
